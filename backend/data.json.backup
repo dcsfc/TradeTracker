@@ -1,0 +1,23 @@
+[
+  {
+    "symbol": "SQD",
+    "pnl": 10.01,
+    "rr": 1.26,
+    "roi": 100.14,
+    "entryPrice": 0.15318,
+    "exitPrice": 0.1501,
+    "stopLoss": 0.15562,
+    "takeProfit": 0.1501,
+    "positionSize": 10.0,
+    "leverage": 50.0,
+    "fees": 0.04,
+    "entryFee": 0.02,
+    "exitFee": 0.02,
+    "exchange": "MEXC",
+    "positionType": "Short",
+    "date": "2025-10-22",
+    "amountInvested": 10.0,
+    "tradeResult": "Win",
+    "notes": null
+  }
+]
