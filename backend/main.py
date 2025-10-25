@@ -12,6 +12,7 @@ from pathlib import Path
 from database import Database
 from dotenv import load_dotenv
 from middleware.performance import setup_performance_middleware
+from utils.cache import cache_manager, start_cache_cleanup
 
 # Load environment variables
 load_dotenv()
@@ -104,15 +105,19 @@ async def startup_event():
     """Initialize database and run background tasks"""
     print("🚀 Starting Crypto Trade Tracker API...")
     start_time = time.time()
-    
+
     # Initialize database
     await db.init_database()
     print("✅ Database initialized")
-    
+
     # Run migration in background (non-blocking)
     asyncio.create_task(db.migrate_from_json())
     print("🔄 JSON migration started in background")
-    
+
+    # Start cache cleanup task
+    asyncio.create_task(start_cache_cleanup())
+    print("💾 Cache cleanup task started")
+
     startup_duration = time.time() - start_time
     print(f"⚡ Startup completed in {startup_duration:.2f}s")
 
@@ -137,13 +142,43 @@ async def get_performance_metrics():
             "very_slow_threshold_ms": 2000,
             "features": [
                 "request_timing",
-                "slow_endpoint_detection", 
+                "slow_endpoint_detection",
                 "response_headers",
                 "performance_logging"
             ]
         },
         "note": "Performance monitoring is active. Check logs for detailed metrics."
     }
+
+@app.get("/api/cache-stats")
+async def get_cache_stats():
+    """Get cache performance statistics"""
+    try:
+        stats = await cache_manager.get_all_stats()
+        return {
+            "status": "active",
+            "cache_performance": stats,
+            "summary": {
+                "total_caches": len(stats),
+                "overall_hit_rate": round(
+                    sum(cache.get('hit_rate', 0) for cache in stats.values()) / len(stats), 2
+                ) if stats else 0,
+                "total_entries": sum(cache.get('size', 0) for cache in stats.values()),
+                "memory_usage_estimate": sum(cache.get('memory_usage_estimate', 0) for cache in stats.values())
+            },
+            "recommendations": [
+                "Hit rate > 70% is excellent",
+                "Hit rate 50-70% is good", 
+                "Hit rate < 50% indicates cache may need tuning",
+                "Monitor evictions to adjust cache size if needed"
+            ]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to retrieve cache statistics"
+        }
 
 @app.post("/api/add_trade", response_model=TradeResponse)
 async def add_trade(trade: Trade):

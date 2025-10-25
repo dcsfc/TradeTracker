@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { preloadService } from './services/preloadService';
+import { dashboardService } from './services/dashboardService';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import PreloadIndicator from './components/shared/PreloadIndicator';
+import CacheIndicator from './components/shared/CacheIndicator';
 import Dashboard from './pages/Dashboard';
 import AddTrade from './pages/AddTrade';
 import AIPrediction from './pages/AIPrediction';
@@ -18,7 +20,12 @@ function AppContent() {
   // Start preloading data immediately when app starts
   useEffect(() => {
     console.log('🚀 App started - beginning data preload...');
+    
+    // Start both AI prediction and dashboard preloading in parallel
     preloadService.startPreloading();
+    dashboardService.startPreloading();
+    
+    console.log('📊 Dashboard preloading started in parallel with AI prediction');
   }, []);
 
   const handleMenuClick = () => {
@@ -89,6 +96,7 @@ function AppContent() {
       
       {/* Preload indicator for background data loading */}
       <PreloadIndicator />
+      <CacheIndicator />
     </div>
   );
 }

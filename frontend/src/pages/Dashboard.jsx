@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useDashboard } from '../hooks/useDashboard';
 import TradeList from '../components/TradeList';
 import ExportButton from '../components/ExportButton';
 
@@ -53,68 +53,19 @@ const CheckIcon = () => (
 );
 
 const Dashboard = () => {
-  const [stats, setStats] = useState({
-    today_pnl: 0,
-    total_trades: 0,
-    win_rate_long: 0,
-    lose_rate_long: 0,
-    win_rate_short: 0,
-    lose_rate_short: 0,
-    win_rate: 0,
-    lose_rate: 0,
-    wins: 0,
-    losses: 0,
-    trades: []
-  });
   const [selectedSymbol, setSelectedSymbol] = useState('All');
   const [selectedTimeFilter, setSelectedTimeFilter] = useState('Today');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
 
-  // Available symbols for filter (extracted from trades)
-  const [availableSymbols, setAvailableSymbols] = useState(['All']);
-
-  const fetchStats = async (symbol = 'All', timeFilter = 'Today') => {
-    try {
-      setLoading(true);
-      setError('');
-      
-      // Build URL with both symbol and time filters
-      let url = 'http://localhost:8000/api/stats';
-      const params = new URLSearchParams();
-      
-      if (symbol !== 'All') {
-        params.append('symbol', symbol);
-      }
-      
-      if (timeFilter === 'All') {
-        params.append('all_time', 'true');
-      }
-      
-      if (params.toString()) {
-        url += `?${params.toString()}`;
-      }
-      
-      const response = await axios.get(url);
-      setStats(response.data);
-      
-      // Update available symbols from all trades
-      if (symbol === 'All') {
-        const allSymbols = ['All', ...new Set(response.data.trades.map(trade => trade.symbol))];
-        setAvailableSymbols(allSymbols);
-      }
-      
-    } catch (error) {
-      console.error('Error fetching stats:', error);
-      setError('Failed to load trading data. Make sure the backend is running.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchStats(selectedSymbol, selectedTimeFilter);
-  }, [selectedSymbol, selectedTimeFilter, fetchStats]);
+  // Use optimized dashboard hook with caching and preloading
+  const { 
+    data: stats, 
+    loading, 
+    error, 
+    refreshing, 
+    isStale, 
+    availableSymbols, 
+    fetchDashboardData 
+  } = useDashboard(selectedSymbol, selectedTimeFilter);
 
   const formatPnL = (pnl) => {
     const value = parseFloat(pnl);
@@ -149,23 +100,41 @@ const Dashboard = () => {
     return 'text-trading-green';
   };
 
-  // Calculate average ROI from all trades
-  const calculateAverageROI = (trades) => {
-    if (!trades || trades.length === 0) return 0;
-    const validROIs = trades.filter(trade => trade.roi !== null && trade.roi !== undefined);
+  // Memoized expensive calculations (only recalculate when trades change)
+  const averageROI = useMemo(() => {
+    if (!stats?.trades || stats.trades.length === 0) return 0;
+    const validROIs = stats.trades.filter(trade => trade.roi !== null && trade.roi !== undefined);
     if (validROIs.length === 0) return 0;
     const sumROI = validROIs.reduce((sum, trade) => sum + trade.roi, 0);
     return sumROI / validROIs.length;
-  };
+  }, [stats?.trades]);
 
-  // Calculate average Risk-Reward ratio from all trades
-  const calculateAverageRR = (trades) => {
-    if (!trades || trades.length === 0) return 0;
-    const validRRs = trades.filter(trade => trade.rr !== null && trade.rr !== undefined);
+  const averageRR = useMemo(() => {
+    if (!stats?.trades || stats.trades.length === 0) return 0;
+    const validRRs = stats.trades.filter(trade => trade.rr !== null && trade.rr !== undefined);
     if (validRRs.length === 0) return 0;
     const sumRR = validRRs.reduce((sum, trade) => sum + trade.rr, 0);
     return sumRR / validRRs.length;
-  };
+  }, [stats?.trades]);
+
+  // Memoized callback for trade updates
+  const handleTradeUpdate = useCallback(() => {
+    fetchDashboardData(true); // Force refresh
+  }, [fetchDashboardData]);
+
+  // Memoized filter handlers to prevent unnecessary re-renders
+  const handleSymbolChange = useCallback((symbol) => {
+    setSelectedSymbol(symbol);
+  }, []);
+
+  const handleTimeFilterChange = useCallback((timeFilter) => {
+    setSelectedTimeFilter(timeFilter);
+  }, []);
+
+  // Memoized available symbols to prevent recalculation
+  const memoizedAvailableSymbols = useMemo(() => {
+    return availableSymbols || ['All'];
+  }, [availableSymbols]);
 
   // Get color for ROI (green if >= 0, red if negative)
   const getROIColor = (roi) => {
@@ -173,7 +142,8 @@ const Dashboard = () => {
   };
 
 
-  if (loading && stats.trades.length === 0) {
+  // Show loading only if no data at all (not just refreshing)
+  if (loading && !stats) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
         <div className="animate-pulse">
@@ -209,6 +179,16 @@ const Dashboard = () => {
               <div className="text-slate-300 font-medium">
                 {new Date().toLocaleTimeString()}
               </div>
+              {isStale && (
+                <div className="text-xs text-amber-400 font-medium mt-1">
+                  ⚠️ Data may be outdated
+                </div>
+              )}
+              {refreshing && (
+                <div className="text-xs text-blue-400 font-medium mt-1">
+                  🔄 Updating...
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -226,7 +206,7 @@ const Dashboard = () => {
             <select
               id="time-filter"
               value={selectedTimeFilter}
-              onChange={(e) => setSelectedTimeFilter(e.target.value)}
+              onChange={(e) => handleTimeFilterChange(e.target.value)}
                 className="px-4 py-3 bg-slate-700/50 border border-slate-600/50 rounded-xl text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-300 backdrop-blur-sm"
             >
               <option value="Today">Today</option>
@@ -242,10 +222,10 @@ const Dashboard = () => {
             <select
               id="symbol-filter"
               value={selectedSymbol}
-              onChange={(e) => setSelectedSymbol(e.target.value)}
+              onChange={(e) => handleSymbolChange(e.target.value)}
                 className="px-4 py-3 bg-slate-700/50 border border-slate-600/50 rounded-xl text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-300 backdrop-blur-sm"
             >
-              {availableSymbols.map(symbol => (
+              {memoizedAvailableSymbols.map(symbol => (
                 <option key={symbol} value={symbol}>
                   {symbol}
                 </option>
@@ -450,15 +430,15 @@ const Dashboard = () => {
           <div className="flex flex-wrap items-center justify-center gap-8 text-sm">
             <div className="flex items-center gap-3">
               <span className="text-slate-500 font-medium">Avg ROI:</span>
-              <span className={`text-lg font-bold ${getROIColor(calculateAverageROI(stats.trades))}`}>
-                {calculateAverageROI(stats.trades).toFixed(2)}%
+              <span className={`text-lg font-bold ${getROIColor(averageROI)}`}>
+                {averageROI.toFixed(2)}%
             </span>
           </div>
             <div className="hidden sm:block w-px h-6 bg-slate-600"></div>
             <div className="flex items-center gap-3">
               <span className="text-slate-500 font-medium">Avg RR:</span>
               <span className="text-lg font-bold text-slate-200">
-                {calculateAverageRR(stats.trades).toFixed(2)}R
+                {averageRR.toFixed(2)}R
               </span>
           </div>
             <div className="hidden sm:block w-px h-6 bg-slate-600"></div>
@@ -473,7 +453,7 @@ const Dashboard = () => {
       </div>
 
       {/* Trade List */}
-      <TradeList trades={stats.trades} loading={loading} onTradeUpdate={() => fetchStats(selectedSymbol, selectedTimeFilter)} />
+      <TradeList trades={stats.trades} loading={loading} onTradeUpdate={handleTradeUpdate} />
     </div>
   );
 };
