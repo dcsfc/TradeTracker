@@ -158,6 +158,12 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown"""
     print("🛑 Shutting down Crypto Trade Tracker API...")
+    # Close DB pool gracefully
+    try:
+        await db.close()
+        print("✅ Database pool closed")
+    except Exception as e:
+        print(f"⚠️  Error closing database pool: {e}")
 
 # Legacy functions removed - now using database only
 
@@ -283,20 +289,20 @@ async def add_trade(request: Request, trade: Trade, api_key: Optional[str] = Dep
         raise HTTPException(status_code=500, detail=f"Error adding trade: {str(e)}")
 
 @app.get("/api/stats", response_model=StatsResponse)
-async def get_stats(symbol: Optional[str] = None, all_time: Optional[bool] = None):
+async def get_stats(symbol: Optional[str] = None, all_time: Optional[bool] = None, page: int = 1, limit: int = 50):
     """Get trading statistics, optionally filtered by symbol and time period"""
     try:
         # Get trades from database
         if all_time:
             # Get all trades
-            trades = await db.get_trades(symbol)
+            trades = await db.get_trades(symbol, None, page=page, limit=limit)
         else:
             # Get today's trades only
             today = date.today().strftime("%Y-%m-%d")
-            trades = await db.get_trades(symbol, today)
+            trades = await db.get_trades(symbol, today, page=page, limit=limit)
         
         # Calculate stats
-        stats = await db.get_stats(symbol, None if all_time else date.today().strftime("%Y-%m-%d"))
+        stats = await db.get_stats(symbol, None if all_time else date.today().strftime("%Y-%m-%d"), page=page, limit=limit)
         
         # Convert trades to response format (handle both old and new formats)
         trade_responses = []

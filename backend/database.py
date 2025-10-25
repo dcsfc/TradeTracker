@@ -1,4 +1,4 @@
-import aiosqlite
+from aiosqlitepool import Pool
 import json
 from datetime import datetime
 from pathlib import Path
@@ -7,11 +7,22 @@ import asyncio
 class Database:
     def __init__(self, db_path="trades.db"):
         self.db_path = db_path
+        self.pool: Pool | None = None
         # Don't initialize synchronously - will be done in startup event
     
     async def init_database(self):
         """Initialize the database with required tables"""
-        async with aiosqlite.connect(self.db_path) as conn:
+        # Initialize connection pool lazily on startup
+        if self.pool is None:
+            self.pool = Pool(
+                self.db_path,
+                min_size=2,
+                max_size=10,
+                timeout=30,
+            )
+            await self.pool.init()
+
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
         
             await cursor.execute('''
@@ -68,6 +79,12 @@ class Database:
             
             await conn.commit()
     
+    async def close(self) -> None:
+        """Close the connection pool on shutdown"""
+        if self.pool is not None:
+            await self.pool.close()
+            self.pool = None
+    
     async def migrate_from_json(self, json_file_path="data.json"):
         """Migrate existing JSON data to SQLite (async)"""
         if not Path(json_file_path).exists():
@@ -86,7 +103,7 @@ class Database:
         
         trades = await asyncio.to_thread(_load_json)
         
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
             
             for trade in trades:
@@ -127,9 +144,20 @@ class Database:
         Path(json_file_path).rename(backup_path)
         print(f"JSON data migrated to SQLite. Original file backed up as {backup_path}")
     
-    async def get_trades(self, symbol=None, date=None):
-        """Get trades with optional filtering"""
-        async with aiosqlite.connect(self.db_path) as conn:
+    async def get_trades(self, symbol=None, date=None, page: int = 1, limit: int = 50):
+        """Get trades with optional filtering and pagination"""
+        # Sanitize pagination inputs
+        page = int(page) if page is not None else 1
+        limit = int(limit) if limit is not None else 50
+        page = 1 if page < 1 else page
+        # Cap limit to prevent excessive memory usage
+        if limit < 1:
+            limit = 1
+        if limit > 200:
+            limit = 200
+        offset = (page - 1) * limit
+
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
             
             query = "SELECT * FROM trades"
@@ -143,7 +171,8 @@ class Database:
                 query += " AND date = ?" if symbol else " WHERE date = ?"
                 params.append(date)
             
-            query += " ORDER BY created_at DESC"
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
             
             await cursor.execute(query, params)
             columns = [description[0] for description in cursor.description]
@@ -153,7 +182,7 @@ class Database:
     
     async def add_trade(self, trade_data):
         """Add a new trade"""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
             
             await cursor.execute('''
@@ -194,7 +223,7 @@ class Database:
     
     async def update_trade(self, trade_id, trade_data):
         """Update an existing trade"""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
             
             # Build dynamic update query
@@ -240,18 +269,18 @@ class Database:
     
     async def delete_trade(self, trade_id):
         """Delete a trade"""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
             
             await cursor.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
             await conn.commit()
     
-    async def get_stats(self, symbol=None, date=None):
+    async def get_stats(self, symbol=None, date=None, page: int = 1, limit: int = 50):
         """Get trading statistics using SQL aggregations for performance"""
         # Fetch trades list (for UI); could be paginated in future
-        trades = await self.get_trades(symbol, date)
+        trades = await self.get_trades(symbol, date, page=page, limit=limit)
 
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
 
             where_parts = []
@@ -330,7 +359,7 @@ class Database:
     
     async def save_market_prediction(self, prediction_data):
         """Save a market prediction to the database"""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
             
             await cursor.execute('''
@@ -354,7 +383,7 @@ class Database:
     
     async def get_market_predictions_history(self, days=7):
         """Get market prediction history for the last N days"""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self.pool.acquire() as conn:
             cursor = await conn.cursor()
             
             # Parameterize interval to avoid string formatting issues
