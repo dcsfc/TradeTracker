@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pydantic.functional_validators import field_validator
 from typing import Optional, List
 import json
 import os
@@ -13,11 +14,20 @@ from database import Database
 from dotenv import load_dotenv
 from middleware.performance import setup_performance_middleware
 from utils.cache import cache_manager, start_cache_cleanup
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+import re
 
 # Load environment variables
 load_dotenv()
 
 app = FastAPI(title="Crypto Trade Tracker API")
+
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Initialize database (will be initialized in startup event)
 db = Database()
@@ -43,9 +53,9 @@ app.add_middleware(
 
 # Pydantic models
 class Trade(BaseModel):
-    symbol: str
-    entryPrice: float
-    exitPrice: float
+    symbol: str = Field(..., min_length=2, max_length=10)
+    entryPrice: float = Field(..., gt=0)
+    exitPrice: float = Field(..., gt=0)
     positionType: str
     pnl: Optional[float] = None
     roi: Optional[float] = None
@@ -62,7 +72,24 @@ class Trade(BaseModel):
     tradeResult: Optional[str] = None
     notes: Optional[str] = None
 
+    @field_validator('symbol')
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        v = (v or '').strip().upper()
+        if not re.match(r'^[A-Z]{2,10}$', v):
+            raise ValueError('Symbol must be 2-10 uppercase letters')
+        return v
+
+    @field_validator('positionType')
+    @classmethod
+    def validate_position_type(cls, v: str) -> str:
+        val = (v or '').strip().lower()
+        if val not in ['long', 'short']:
+            raise ValueError('Position type must be "long" or "short"')
+        return 'Long' if val == 'long' else 'Short'
+
 class TradeResponse(BaseModel):
+    id: Optional[int] = None
     symbol: str
     pnl: float
     rr: Optional[float] = None
@@ -110,8 +137,14 @@ async def startup_event():
     await db.init_database()
     print("✅ Database initialized")
 
-    # Run migration in background (non-blocking)
-    asyncio.create_task(db.migrate_from_json())
+    # Run migration in background with error handling
+    async def run_migration_with_error_handling():
+        try:
+            await db.migrate_from_json()
+            print("✅ Migration completed successfully")
+        except Exception as e:
+            print(f"❌ Migration failed: {e}")
+    asyncio.create_task(run_migration_with_error_handling())
     print("🔄 JSON migration started in background")
 
     # Start cache cleanup task
@@ -180,8 +213,19 @@ async def get_cache_stats():
             "message": "Failed to retrieve cache statistics"
         }
 
+def _get_expected_api_key() -> Optional[str]:
+    return os.getenv("API_KEY")
+
+async def verify_api_key(x_api_key: Optional[str] = Header(default=None)) -> Optional[str]:
+    expected = _get_expected_api_key()
+    # Only enforce if API_KEY is set
+    if expected and x_api_key != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return x_api_key
+
 @app.post("/api/add_trade", response_model=TradeResponse)
-async def add_trade(trade: Trade):
+@limiter.limit("10/minute")
+async def add_trade(request: Request, trade: Trade, api_key: Optional[str] = Depends(verify_api_key)):
     """Add a new trade with today's date"""
     try:
         # Calculate PnL and ROI
@@ -202,13 +246,16 @@ async def add_trade(trade: Trade):
         # Since we don't have stop loss, we'll use a simplified RR calculation
         # RR = |PnL| / Entry Price (simplified version)
         rr = abs(pnl) / entry_price if entry_price > 0 else 0
+
+        # Compute ROI if not provided
+        computed_roi = (pnl / entry_price * 100) if entry_price > 0 else 0
         
         # Create new trade with today's date
         new_trade = {
             "symbol": trade.symbol.upper(),
-            "pnl": trade.pnl if trade.pnl is not None else 0.0,
-            "rr": trade.rr,
-            "roi": trade.roi,
+            "pnl": round(pnl, 2),
+            "rr": round(rr, 2),
+            "roi": trade.roi if trade.roi is not None else round(computed_roi, 2),
             "entryPrice": entry_price,
             "exitPrice": exit_price,
             "stopLoss": trade.stopLoss,
@@ -279,24 +326,25 @@ async def get_stats(symbol: Optional[str] = None, all_time: Optional[bool] = Non
             else:
                 # Handle new format
                 trade_response = TradeResponse(
+                    id=trade.get('id'),
                     symbol=trade.get('symbol', ''),
                     pnl=trade.get('pnl', 0),
                     rr=trade.get('rr'),
                     roi=trade.get('roi'),
-                    entryPrice=trade.get('entryPrice', 0.0),
-                    exitPrice=trade.get('exitPrice', 0.0),
-                    stopLoss=trade.get('stopLoss'),
-                    takeProfit=trade.get('takeProfit'),
-                    positionSize=trade.get('positionSize'),
+                    entryPrice=trade.get('entry_price', trade.get('entryPrice', 0.0)),
+                    exitPrice=trade.get('exit_price', trade.get('exitPrice', 0.0)),
+                    stopLoss=trade.get('stop_loss', trade.get('stopLoss')),
+                    takeProfit=trade.get('take_profit', trade.get('takeProfit')),
+                    positionSize=trade.get('position_size', trade.get('positionSize')),
                     leverage=trade.get('leverage'),
                     fees=trade.get('fees'),
-                    entryFee=trade.get('entryFee'),
-                    exitFee=trade.get('exitFee'),
+                    entryFee=trade.get('entry_fee', trade.get('entryFee')),
+                    exitFee=trade.get('exit_fee', trade.get('exitFee')),
                     exchange=trade.get('exchange'),
-                    positionType=trade.get('positionType', 'Long'),
+                    positionType=trade.get('position_type', trade.get('positionType', 'Long')),
                     date=trade.get('date', ''),
-                    amountInvested=trade.get('amountInvested'),
-                    tradeResult=trade.get('tradeResult')
+                    amountInvested=trade.get('amount_invested', trade.get('amountInvested')),
+                    tradeResult=trade.get('trade_result', trade.get('tradeResult'))
                 )
             trade_responses.append(trade_response)
         

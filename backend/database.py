@@ -59,6 +59,12 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+            # Helpful index for common query filters
+            await cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_trades_symbol_date
+                ON trades(symbol, date)
+            ''')
             
             await conn.commit()
     
@@ -195,12 +201,35 @@ class Database:
             set_clauses = []
             params = []
             
+            # Whitelist mapping from API field names to DB column names
+            allowed_fields = {
+                'symbol': 'symbol',
+                'entryPrice': 'entry_price',
+                'exitPrice': 'exit_price',
+                'positionType': 'position_type',
+                'pnl': 'pnl',
+                'roi': 'roi',
+                'rr': 'rr',
+                'stopLoss': 'stop_loss',
+                'takeProfit': 'take_profit',
+                'positionSize': 'position_size',
+                'leverage': 'leverage',
+                'fees': 'fees',
+                'entryFee': 'entry_fee',
+                'exitFee': 'exit_fee',
+                'exchange': 'exchange',
+                'baseCurrency': 'base_currency',
+                'amountInvested': 'amount_invested',
+                'tradeResult': 'trade_result',
+                'cryptoQuantity': 'crypto_quantity',
+                'notes': 'notes',
+                'date': 'date'
+            }
+            
             for key, value in trade_data.items():
-                if key in ['symbol', 'entryPrice', 'exitPrice', 'positionType', 'pnl', 'roi', 'rr',
-                          'stopLoss', 'takeProfit', 'positionSize', 'leverage', 'fees', 'entryFee',
-                          'exitFee', 'exchange', 'baseCurrency', 'amountInvested', 'tradeResult',
-                          'cryptoQuantity', 'notes', 'date']:
-                    set_clauses.append(f"{key} = ?")
+                db_field = allowed_fields.get(key)
+                if db_field is not None:
+                    set_clauses.append(f"{db_field} = ?")
                     params.append(value)
             
             if set_clauses:
@@ -218,60 +247,86 @@ class Database:
             await conn.commit()
     
     async def get_stats(self, symbol=None, date=None):
-        """Get trading statistics"""
+        """Get trading statistics using SQL aggregations for performance"""
+        # Fetch trades list (for UI); could be paginated in future
         trades = await self.get_trades(symbol, date)
-        
-        if not trades:
+
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.cursor()
+
+            where_parts = []
+            params = []
+            if symbol:
+                where_parts.append("symbol = ?")
+                params.append(symbol)
+            if date:
+                where_parts.append("date = ?")
+                params.append(date)
+            where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+            await cursor.execute(
+                f'''
+                SELECT 
+                    COALESCE(SUM(COALESCE(pnl,0)), 0) AS total_pnl,
+                    COUNT(*) AS total_trades,
+                    SUM(CASE WHEN COALESCE(pnl,0) > 0 THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN COALESCE(pnl,0) < 0 THEN 1 ELSE 0 END) AS losses,
+                    SUM(CASE WHEN LOWER(position_type) = 'long' AND COALESCE(pnl,0) > 0 THEN 1 ELSE 0 END) AS long_wins,
+                    SUM(CASE WHEN LOWER(position_type) = 'long' THEN 1 ELSE 0 END) AS long_total,
+                    SUM(CASE WHEN LOWER(position_type) = 'short' AND COALESCE(pnl,0) > 0 THEN 1 ELSE 0 END) AS short_wins,
+                    SUM(CASE WHEN LOWER(position_type) = 'short' THEN 1 ELSE 0 END) AS short_total
+                FROM trades
+                {where_clause}
+                ''',
+                params
+            )
+
+            row = await cursor.fetchone()
+
+            if not row:
+                return {
+                    'today_pnl': 0,
+                    'total_trades': 0,
+                    'wins': 0,
+                    'losses': 0,
+                    'win_rate': 0,
+                    'lose_rate': 0,
+                    'win_rate_long': 0,
+                    'lose_rate_long': 0,
+                    'win_rate_short': 0,
+                    'lose_rate_short': 0,
+                    'trades': []
+                }
+
+            total_pnl = row[0] or 0
+            total_trades = row[1] or 0
+            wins = row[2] or 0
+            losses = row[3] or 0
+            long_wins = row[4] or 0
+            long_total = row[5] or 0
+            short_wins = row[6] or 0
+            short_total = row[7] or 0
+
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+            lose_rate = (losses / total_trades * 100) if total_trades > 0 else 0
+            win_rate_long = (long_wins / long_total * 100) if long_total > 0 else 0
+            lose_rate_long = ((long_total - long_wins) / long_total * 100) if long_total > 0 else 0
+            win_rate_short = (short_wins / short_total * 100) if short_total > 0 else 0
+            lose_rate_short = ((short_total - short_wins) / short_total * 100) if short_total > 0 else 0
+
             return {
-                'today_pnl': 0,
-                'total_trades': 0,
-                'wins': 0,
-                'losses': 0,
-                'win_rate': 0,
-                'lose_rate': 0,
-                'win_rate_long': 0,
-                'lose_rate_long': 0,
-                'win_rate_short': 0,
-                'lose_rate_short': 0,
-                'trades': []
+                'today_pnl': total_pnl,
+                'total_trades': total_trades,
+                'wins': wins,
+                'losses': losses,
+                'win_rate': win_rate,
+                'lose_rate': lose_rate,
+                'win_rate_long': win_rate_long,
+                'lose_rate_long': lose_rate_long,
+                'win_rate_short': win_rate_short,
+                'lose_rate_short': lose_rate_short,
+                'trades': trades
             }
-        
-        # Calculate basic stats
-        total_pnl = sum(trade.get('pnl', 0) or 0 for trade in trades)
-        wins = len([t for t in trades if (t.get('pnl', 0) or 0) > 0])
-        losses = len([t for t in trades if (t.get('pnl', 0) or 0) < 0])
-        total_trades = len(trades)
-        
-        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-        lose_rate = (losses / total_trades * 100) if total_trades > 0 else 0
-        
-        # Long/Short specific stats
-        long_trades = [t for t in trades if t.get('positionType', '').lower() == 'long']
-        short_trades = [t for t in trades if t.get('positionType', '').lower() == 'short']
-        
-        long_wins = len([t for t in long_trades if (t.get('pnl', 0) or 0) > 0])
-        long_losses = len([t for t in long_trades if (t.get('pnl', 0) or 0) < 0])
-        short_wins = len([t for t in short_trades if (t.get('pnl', 0) or 0) > 0])
-        short_losses = len([t for t in short_trades if (t.get('pnl', 0) or 0) < 0])
-        
-        win_rate_long = (long_wins / len(long_trades) * 100) if long_trades else 0
-        lose_rate_long = (long_losses / len(long_trades) * 100) if long_trades else 0
-        win_rate_short = (short_wins / len(short_trades) * 100) if short_trades else 0
-        lose_rate_short = (short_losses / len(short_trades) * 100) if short_trades else 0
-        
-        return {
-            'today_pnl': total_pnl,
-            'total_trades': total_trades,
-            'wins': wins,
-            'losses': losses,
-            'win_rate': win_rate,
-            'lose_rate': lose_rate,
-            'win_rate_long': win_rate_long,
-            'lose_rate_long': lose_rate_long,
-            'win_rate_short': win_rate_short,
-            'lose_rate_short': lose_rate_short,
-            'trades': trades
-        }
     
     async def save_market_prediction(self, prediction_data):
         """Save a market prediction to the database"""
@@ -302,11 +357,15 @@ class Database:
         async with aiosqlite.connect(self.db_path) as conn:
             cursor = await conn.cursor()
             
-            await cursor.execute('''
+            # Parameterize interval to avoid string formatting issues
+            await cursor.execute(
+                '''
                 SELECT * FROM market_predictions 
-                WHERE created_at >= datetime('now', '-{} days')
+                WHERE created_at >= datetime('now', ?)
                 ORDER BY created_at DESC
-            '''.format(days))
+                ''',
+                (f'-{int(days)} days',)
+            )
             
             columns = [description[0] for description in cursor.description]
             predictions = [dict(zip(columns, row)) for row in await cursor.fetchall()]

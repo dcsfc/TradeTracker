@@ -37,6 +37,12 @@ from database import Database
 from loguru import logger
 
 router = APIRouter(prefix="/api", tags=["Enhanced Market Prediction"])
+# Backward-compatible basic endpoint that delegates to enhanced
+@router.get("/market-prediction", response_model=EnhancedMarketPredictionResponse)
+async def basic_market_prediction(background_tasks: BackgroundTasks, response: Response):
+    """Backward-compatible endpoint that serves the enhanced prediction"""
+    return await enhanced_market_prediction(background_tasks, response)
+
 
 # Cache configuration
 CACHE_TTL = 900  # 15 minutes
@@ -848,7 +854,7 @@ async def get_prediction_history(days: int = 7):
     """Get prediction history"""
     try:
         db = Database()
-        history = db.get_market_predictions_history(days)
+        history = await db.get_market_predictions_history(days)
         
         formatted_history = []
         for record in history:
@@ -877,7 +883,7 @@ async def run_backtest(days: int = 30):
     """
     try:
         db = Database()
-        historical_predictions = db.get_market_predictions_history(days)
+        historical_predictions = await db.get_market_predictions_history(days)
         
         if len(historical_predictions) < 10:
             return {
