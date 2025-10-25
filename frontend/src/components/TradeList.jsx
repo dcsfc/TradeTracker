@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { API_CONFIG } from '../constants/config';
 
 // Professional SVG Icons
 const EditIcon = () => (
@@ -124,8 +125,10 @@ const TradeList = ({ trades, loading, onTradeUpdate }) => {
         ? (exitPrice - entryPrice)
         : (entryPrice - exitPrice);
       
-      const pnl = (rawPnL * positionSize * leverage) - fees;
-      const amountInvested = entryPrice * positionSize;
+      // positionSize is in USDT; convert to quantity for PnL
+      const quantity = positionSize / entryPrice;
+      const pnl = (rawPnL * quantity * leverage) - fees;
+      const amountInvested = positionSize; // already USDT
       const roi = (pnl / amountInvested) * 100;
       const tradeResult = pnl >= 0 ? 'Win' : 'Loss';
 
@@ -139,7 +142,7 @@ const TradeList = ({ trades, loading, onTradeUpdate }) => {
       };
 
       // Update trade via API
-      await axios.put(`http://localhost:8000/api/update_trade/${editingTrade.id}`, updatedTrade);
+      await axios.put(`${API_CONFIG.BASE_URL}/api/update_trade/${editingTrade.id}`, updatedTrade);
       
       setEditingTrade(null);
       setEditForm({});
@@ -151,7 +154,14 @@ const TradeList = ({ trades, loading, onTradeUpdate }) => {
 
   const handleDelete = async (tradeIndex) => {
     try {
-      await axios.delete(`http://localhost:8000/api/delete_trade/${tradeIndex}`);
+      // Use the actual trade id rather than list index
+      const tradeId = trades[tradeIndex]?.id;
+      if (!tradeId && trades[tradeIndex]) {
+        // Attempt fallback: some lists may not include id if built from legacy data
+        console.warn('Trade id missing; cannot delete reliably. Skipping.');
+        return;
+      }
+      await axios.delete(`${API_CONFIG.BASE_URL}/api/delete_trade/${tradeId}`);
       setDeleteConfirm(null);
       setDeleteIndex(null);
       if (onTradeUpdate) onTradeUpdate();

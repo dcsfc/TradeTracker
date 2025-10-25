@@ -3,6 +3,7 @@ ML Models Module - Deep Learning and Ensemble Prediction
 """
 
 import torch
+import asyncio
 import torch.nn as nn
 import numpy as np
 import pandas as pd

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { API_CONFIG } from '../constants/config';
 
 const AddTrade = () => {
   const [formData, setFormData] = useState({
@@ -146,7 +147,7 @@ const AddTrade = () => {
         tradeResult: tradeResult
       };
 
-      const response = await axios.post('http://localhost:8000/api/add_trade', tradeData);
+      const response = await axios.post(`${API_CONFIG.BASE_URL}/api/add_trade`, tradeData);
       
       // Clear form
       setFormData({ 
