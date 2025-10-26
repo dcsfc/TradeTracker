@@ -36,6 +36,54 @@ from .ml_models import ensemble_predictor
 from database import Database
 from loguru import logger
 
+# Pydantic models
+class Article(BaseModel):
+    title: str
+    source: str
+    link: str
+    summary: Optional[str] = None
+
+class EnhancedMarketPredictionResponse(BaseModel):
+    # Core prediction
+    summary: str
+    prediction: str
+    confidence: float
+    direction: str
+    
+    # Sentiment analysis
+    sentiment_score: float
+    news_sentiment: float
+    social_sentiment: float
+    articles_analyzed: int
+    positive_pct: float
+    negative_pct: float
+    neutral_pct: float
+    
+    # Price & Technical
+    current_price: float
+    price_change_24h: float
+    price_change_7d: float
+    technical_signals: Dict
+    
+    # Whale activity
+    whale_activity: Dict
+    
+    # ML predictions
+    ml_prediction: Dict
+    
+    # NEW: Advanced metrics
+    evaluation_metrics: Optional[Dict] = None
+    
+    # Additional data
+    top_coins: List[Dict]
+    articles: List[Article]
+    
+    # Metadata
+    data_sources_used: List[str]
+    model_version: str
+    last_updated: str
+    mock: bool = False
+
 router = APIRouter(prefix="/api", tags=["Enhanced Market Prediction"])
 # Backward-compatible basic endpoint that delegates to enhanced
 @router.get("/market-prediction", response_model=EnhancedMarketPredictionResponse)
@@ -121,53 +169,6 @@ def _load_sentiment_model():
         return None
 
 
-class Article(BaseModel):
-    title: str
-    source: str
-    link: str
-    summary: Optional[str] = None
-
-
-class EnhancedMarketPredictionResponse(BaseModel):
-    # Core prediction
-    summary: str
-    prediction: str
-    confidence: float
-    direction: str
-    
-    # Sentiment analysis
-    sentiment_score: float
-    news_sentiment: float
-    social_sentiment: float
-    articles_analyzed: int
-    positive_pct: float
-    negative_pct: float
-    neutral_pct: float
-    
-    # Price & Technical
-    current_price: float
-    price_change_24h: float
-    price_change_7d: float
-    technical_signals: Dict
-    
-    # Whale activity
-    whale_activity: Dict
-    
-    # ML predictions
-    ml_prediction: Dict
-    
-    # NEW: Advanced metrics
-    evaluation_metrics: Optional[Dict] = None
-    
-    # Additional data
-    top_coins: List[Dict]
-    articles: List[Article]
-    
-    # Metadata
-    data_sources_used: List[str]
-    model_version: str
-    last_updated: str
-    mock: bool = False
 
 
 # ========================
