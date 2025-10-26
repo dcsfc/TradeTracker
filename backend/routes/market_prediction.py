@@ -588,20 +588,17 @@ async def save_prediction_to_db(
     """Background task to save prediction to database"""
     try:
         db = Database()
-        await db.save_market_prediction({
-            'prediction': prediction,
-            'confidence': confidence,
-            'sentiment_score': combined_sentiment,
-            'summary': summary,
-            'articles_analyzed': articles_analyzed,
-            'positive_pct': sentiment_breakdown['positive_pct'],
-            'negative_pct': sentiment_breakdown['negative_pct'],
-            'neutral_pct': sentiment_breakdown['neutral_pct'],
-            'top_coins': json.dumps(top_coins),
-            'model_version': 'v3.0-stacking-transformer',
-            'data_sources': json.dumps(data_sources_used),
-            'advanced_features': json.dumps(advanced_features)
-        })
+        await db.save_market_prediction(
+            prediction,
+            confidence,
+            combined_sentiment,
+            summary,
+            articles_analyzed,
+            sentiment_breakdown.get('positive_pct', 0),
+            sentiment_breakdown.get('negative_pct', 0),
+            sentiment_breakdown.get('neutral_pct', 0),
+            top_coins,
+        )
         logger.info("Prediction saved to database in background")
     except Exception as e:
         logger.error(f"Background database save error: {e}")
@@ -637,12 +634,12 @@ async def enhanced_market_prediction(background_tasks: BackgroundTasks, response
         # Check cache first
         cached_data = await cache_manager.market_predictions.get(cache_key)
         if cached_data:
-            logger.info("🎯 Cache HIT - Returning cached prediction")
+            logger.info("Cache HIT - Returning cached prediction")
             response.headers["X-Cache-Status"] = "HIT"
             response.headers["X-Cache-TTL"] = "300"  # 5 minutes
             return EnhancedMarketPredictionResponse(**cached_data)
         
-        logger.info("🔄 Cache MISS - Fetching fresh market data from all sources...")
+        logger.info("Cache MISS - Fetching fresh market data from all sources...")
         response.headers["X-Cache-Status"] = "MISS"
         
         logger.info("Fetching fresh market data from all sources...")
@@ -839,9 +836,9 @@ async def enhanced_market_prediction(background_tasks: BackgroundTasks, response
         
         # Cache the response for 5 minutes
         await cache_manager.market_predictions.set(cache_key, response_data, ttl=300)
-        logger.info("💾 Prediction cached for 5 minutes")
+        logger.info("Prediction cached for 5 minutes")
         
-        logger.info(f"✅ UPGRADED prediction generated: {prediction} ({confidence:.2%} confidence)")
+        logger.info(f"UPGRADED prediction generated: {prediction} ({confidence:.2%} confidence)")
         
         return EnhancedMarketPredictionResponse(**response_data)
         

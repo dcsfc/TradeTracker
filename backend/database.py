@@ -80,7 +80,7 @@ class Database:
 
         # Load existing JSON data asynchronously (non-blocking)
         def _load_json():
-            with open(json_file_path, 'r') as f:
+            with open(json_file_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
 
         trades = await asyncio.to_thread(_load_json)
@@ -122,7 +122,7 @@ class Database:
             await conn.commit()
             # Rename the original JSON file to prevent re-migration
             Path(json_file_path).rename(backup_path)
-            print(f"✅ JSON data migrated to SQLite. Original file backed up to {backup_path}")
+            print(f"JSON data migrated to SQLite. Original file backed up to {backup_path}")
 
     async def get_trades(self, symbol=None, time_filter=None):
         """Get trades from database with optional filtering"""
