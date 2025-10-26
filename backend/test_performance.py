@@ -28,13 +28,13 @@ class PerformanceTester:
                     if response.status == 200:
                         startup_time = time.time() - start_time
                         self.results['startup_time'] = startup_time
-                        print(f"✅ Startup time: {startup_time:.2f}s")
+                        print(f"Startup time: {startup_time:.2f}s")
                         return startup_time
                     else:
-                        print(f"❌ Startup failed: {response.status}")
+                        print(f"Startup failed: {response.status}")
                         return -1
         except Exception as e:
-            print(f"❌ Startup test failed: {e}")
+            print(f"Startup test failed: {e}")
             return -1
     
     async def test_endpoint_performance(self, endpoint: str, method: str = "GET", data: Dict = None) -> Dict:
@@ -72,16 +72,16 @@ class PerformanceTester:
                 else:
                     result['performance'] = 'slow'
                 
-                print(f"📊 {method} {endpoint}: {duration:.3f}s ({result['performance']})")
+                print(f"{method} {endpoint}: {duration:.3f}s ({result['performance']})")
                 return result
                 
         except Exception as e:
-            print(f"❌ {endpoint} test failed: {e}")
+            print(f"{endpoint} test failed: {e}")
             return {"error": str(e)}
     
     async def test_concurrent_requests(self, endpoint: str, num_requests: int = 10) -> Dict:
         """Test concurrent request handling"""
-        print(f"🔄 Testing {num_requests} concurrent requests to {endpoint}")
+        print(f"Testing {num_requests} concurrent requests to {endpoint}")
         
         start_time = time.time()
         
@@ -122,12 +122,12 @@ class PerformanceTester:
             'requests_per_second': num_requests / total_time
         }
         
-        print(f"📈 Concurrent test: {successful_requests}/{num_requests} successful, {concurrent_result['requests_per_second']:.1f} req/s")
+        print(f"Concurrent test: {successful_requests}/{num_requests} successful, {concurrent_result['requests_per_second']:.1f} req/s")
         return concurrent_result
     
     async def run_full_test(self):
         """Run comprehensive performance tests"""
-        print("🚀 Starting Backend Performance Tests")
+        print("Starting Backend Performance Tests")
         print("=" * 50)
         
         # Test startup time
@@ -153,17 +153,17 @@ class PerformanceTester:
         self.results['concurrent'] = concurrent_result
         
         # Performance summary
-        print("\n📊 Performance Summary")
+        print("\nPerformance Summary")
         print("=" * 50)
         
         if 'startup_time' in self.results:
             startup_time = self.results['startup_time']
             if startup_time < 4.0:
-                print(f"✅ Startup: {startup_time:.2f}s (EXCELLENT - < 4s)")
+                print(f"Startup: {startup_time:.2f}s (EXCELLENT - < 4s)")
             elif startup_time < 8.0:
-                print(f"✅ Startup: {startup_time:.2f}s (GOOD - < 8s)")
+                print(f"Startup: {startup_time:.2f}s (GOOD - < 8s)")
             else:
-                print(f"⚠️  Startup: {startup_time:.2f}s (NEEDS IMPROVEMENT - > 8s)")
+                print(f"Startup: {startup_time:.2f}s (NEEDS IMPROVEMENT - > 8s)")
         
         # Endpoint performance
         for result in endpoint_results:
@@ -171,15 +171,15 @@ class PerformanceTester:
                 endpoint = result['endpoint']
                 duration = result['duration']
                 performance = result.get('performance', 'unknown')
-                print(f"📊 {endpoint}: {duration:.3f}s ({performance})")
+                print(f"{endpoint}: {duration:.3f}s ({performance})")
         
         # Concurrent performance
         if concurrent_result['success_rate'] > 0.9:
-            print(f"✅ Concurrent: {concurrent_result['requests_per_second']:.1f} req/s (EXCELLENT)")
+            print(f"Concurrent: {concurrent_result['requests_per_second']:.1f} req/s (EXCELLENT)")
         elif concurrent_result['success_rate'] > 0.8:
-            print(f"✅ Concurrent: {concurrent_result['requests_per_second']:.1f} req/s (GOOD)")
+            print(f"Concurrent: {concurrent_result['requests_per_second']:.1f} req/s (GOOD)")
         else:
-            print(f"⚠️  Concurrent: {concurrent_result['requests_per_second']:.1f} req/s (NEEDS IMPROVEMENT)")
+            print(f"Concurrent: {concurrent_result['requests_per_second']:.1f} req/s (NEEDS IMPROVEMENT)")
         
         return self.results
 
@@ -190,11 +190,11 @@ async def main():
     results = await tester.run_full_test()
     
     # Save results to file
-    with open('performance_test_results.json', 'w') as f:
+    with open('performance_test_results.json', 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2)
     
-    print(f"\n💾 Results saved to performance_test_results.json")
-    print("🎯 Performance optimization complete!")
+    print(f"\nResults saved to performance_test_results.json")
+    print("Performance optimization complete!")
 
 
 if __name__ == "__main__":

@@ -57,6 +57,8 @@ class Trade(BaseModel):
     entryPrice: float = Field(..., gt=0)
     exitPrice: float = Field(..., gt=0)
     positionType: str
+    baseCurrency: Optional[str] = None
+    cryptoQuantity: Optional[float] = None
     pnl: Optional[float] = None
     roi: Optional[float] = None
     rr: Optional[float] = None
@@ -130,40 +132,40 @@ DATA_FILE = Path("data.json")
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and run background tasks"""
-    print("🚀 Starting Crypto Trade Tracker API...")
+    print("Starting Crypto Trade Tracker API...")
     start_time = time.time()
 
     # Initialize database
     await db.init_database()
-    print("✅ Database initialized")
+    print("Database initialized")
 
     # Run migration in background with error handling
     async def run_migration_with_error_handling():
         try:
             await db.migrate_from_json()
-            print("✅ Migration completed successfully")
+            print("Migration completed successfully")
         except Exception as e:
-            print(f"❌ Migration failed: {e}")
+            print(f"Migration failed: {e}")
     asyncio.create_task(run_migration_with_error_handling())
-    print("🔄 JSON migration started in background")
+    print("JSON migration started in background")
 
     # Start cache cleanup task
     asyncio.create_task(start_cache_cleanup())
-    print("💾 Cache cleanup task started")
+    print("Cache cleanup task started")
 
     startup_duration = time.time() - start_time
-    print(f"⚡ Startup completed in {startup_duration:.2f}s")
+    print(f"Startup completed in {startup_duration:.2f}s")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    print("🛑 Shutting down Crypto Trade Tracker API...")
+    print("Shutting down Crypto Trade Tracker API...")
     # Close DB pool gracefully
     try:
         await db.close()
-        print("✅ Database pool closed")
+        print("Database pool closed")
     except Exception as e:
-        print(f"⚠️  Error closing database pool: {e}")
+        print(f"Error closing database pool: {e}")
 
 # Legacy functions removed - now using database only
 
@@ -267,11 +269,13 @@ async def add_trade(request: Request, trade: Trade, api_key: Optional[str] = Dep
             "stopLoss": trade.stopLoss,
             "takeProfit": trade.takeProfit,
             "positionSize": trade.positionSize,
+            "cryptoQuantity": round((trade.positionSize or 0) / entry_price, 8) if entry_price > 0 and trade.positionSize else trade.cryptoQuantity,
             "leverage": trade.leverage if trade.leverage is not None else 1.0,
             "fees": trade.fees if trade.fees is not None else 0.0,
             "entryFee": trade.entryFee,
             "exitFee": trade.exitFee,
             "exchange": trade.exchange,
+            "baseCurrency": trade.baseCurrency,
             "positionType": position_type,
             "date": date.today().strftime("%Y-%m-%d"),
             "amountInvested": trade.amountInvested,
@@ -279,8 +283,32 @@ async def add_trade(request: Request, trade: Trade, api_key: Optional[str] = Dep
             "notes": trade.notes
         }
         
-        # Add to database
-        trade_id = await db.add_trade(new_trade)
+        # Map to database schema (snake_case) and persist
+        db_trade = {
+            'symbol': new_trade['symbol'],
+            'entry_price': new_trade['entryPrice'],
+            'exit_price': new_trade['exitPrice'],
+            'position_type': new_trade['positionType'],
+            'pnl': new_trade['pnl'],
+            'roi': new_trade['roi'],
+            'rr': new_trade['rr'],
+            'stop_loss': new_trade['stopLoss'],
+            'take_profit': new_trade['takeProfit'],
+            'position_size': new_trade['positionSize'],
+            'leverage': new_trade['leverage'],
+            'fees': new_trade['fees'],
+            'entry_fee': new_trade['entryFee'],
+            'exit_fee': new_trade['exitFee'],
+            'exchange': new_trade['exchange'],
+            'base_currency': new_trade.get('baseCurrency'),
+            'amount_invested': new_trade['amountInvested'],
+            'trade_result': new_trade['tradeResult'],
+            'crypto_quantity': new_trade.get('cryptoQuantity'),
+            'notes': new_trade['notes'],
+            'date': new_trade['date']
+        }
+
+        trade_id = await db.add_trade(db_trade)
         new_trade["id"] = trade_id
         
         return TradeResponse(**new_trade)
@@ -294,15 +322,17 @@ async def get_stats(symbol: Optional[str] = None, all_time: Optional[bool] = Non
     try:
         # Get trades from database
         if all_time:
-            # Get all trades
-            trades = await db.get_trades(symbol, None, page=page, limit=limit)
+            trades = await db.get_trades(symbol, None)
         else:
-            # Get today's trades only
-            today = date.today().strftime("%Y-%m-%d")
-            trades = await db.get_trades(symbol, today, page=page, limit=limit)
+            trades = await db.get_trades(symbol, 'Today')
         
         # Calculate stats
-        stats = await db.get_stats(symbol, None if all_time else date.today().strftime("%Y-%m-%d"), page=page, limit=limit)
+        stats = await db.get_stats(symbol, None if all_time else 'Today')
+
+        # Apply simple pagination in-memory
+        start_index = max(0, (page - 1) * limit)
+        end_index = start_index + limit
+        trades = trades[start_index:end_index]
         
         # Convert trades to response format (handle both old and new formats)
         trade_responses = []
